@@ -1,0 +1,10 @@
+Range("B4:B9").Select
+
+'Copilotを開く操作
+SendKeys "%hfx", True
+
+Application.Wait Now + TimeValue("0:00:02")
+
+'Copilotの入力欄にフォーカスできた状態なら
+SendKeys "B4からB9の内容をそれぞれ分かりやすく解説してください。", True
+SendKeys "{ENTER}", True
