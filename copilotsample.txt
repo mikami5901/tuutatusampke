@@ -3,6 +3,12 @@ Range("B4:B9").Select
 'Copilotを開く操作
 SendKeys "%hfx", True
 
+'別々に書いたパターン
+'SendKeys "%", True   'Alt
+'SendKeys "h", True   'H
+'SendKeys "f", True   'F
+'SendKeys "x", True   'X
+
 Application.Wait Now + TimeValue("0:00:02")
 
 'Copilotの入力欄にフォーカスできた状態なら
