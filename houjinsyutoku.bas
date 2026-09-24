@@ -1,0 +1,620 @@
+Attribute VB_Name = "Module6"
+Option Explicit
+
+Sub GVAHTML取得()
+
+    Dim http As Object
+    Dim url As String
+    Dim pref As String
+    Dim corp As String
+
+    '--------------------------------
+    ' セルから検索条件取得
+    '--------------------------------
+    pref = Range("B1").Value
+    corp = Range("B2").Value
+
+    If pref = "" Or corp = "" Then
+        MsgBox "都道府県と法人名を入力してください。"
+        Exit Sub
+    End If
+
+    '--------------------------------
+    ' URL作成
+    '--------------------------------
+    url = "https://toukibo.ai-con.lawyer/search-service/result?" & _
+          "corp=" & WorksheetFunction.EncodeURL(corp) & _
+          "&pref=" & WorksheetFunction.EncodeURL(pref)
+
+    '確認用
+    Debug.Print url
+
+    '--------------------------------
+    ' HTTP GET
+    '--------------------------------
+    Set http = CreateObject("MSXML2.XMLHTTP")
+
+    http.Open "GET", url, False
+    http.setRequestHeader "User-Agent", _
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    http.send
+
+    '--------------------------------
+    ' ステータス確認
+    '--------------------------------
+    Range("A5").Value = "HTTP Status"
+    Range("B5").Value = http.Status
+
+    '--------------------------------
+    ' レスポンスHTML
+    '--------------------------------
+    Range("A6").Value = http.responseText
+
+    MsgBox "取得完了" & vbCrLf & _
+           "HTTP Status : " & http.Status
+
+End Sub
+
+Sub GVA_JS取得()
+
+    Dim http As Object
+    Dim url As String
+
+    url = "https://toukibo.ai-con.lawyer/_next/static/chunks/app/(search-service)/search-service/result/page-a3e73ef8a9b183fc.js"
+
+    Set http = CreateObject("MSXML2.XMLHTTP")
+
+    http.Open "GET", url, False
+    http.setRequestHeader "User-Agent", _
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    http.send
+
+    Debug.Print http.Status
+
+    'JSをテキストファイルとして保存
+    Open ThisWorkbook.path & "\GVA_page.js" For Output As #1
+    Print #1, http.responseText
+    Close #1
+
+    MsgBox "JS取得完了" & vbCrLf & _
+           "Status : " & http.Status
+
+End Sub
+
+
+Sub 法人検索法人番号正規()
+
+    Dim http As Object
+    Dim url As String
+    Dim json As String
+    Dim pref As String
+    Dim corp As String
+
+    Dim re As Object
+    Dim matches As Object
+
+    Dim i As Long
+    Dim row As Long
+    Dim data As String
+
+    '========================
+    ' 検索条件
+    '========================
+    pref = Range("B1").Value  '都道府県リスト作成
+    corp = Range("B2").Value  '会社名入力
+
+    If pref = "" Or corp = "" Then
+        MsgBox "都道府県と会社名を入力してください。"
+        Exit Sub
+    End If
+
+    '========================
+    ' GVA API
+    '========================
+    url = "https://toukibo.ai-con.lawyer/api/corporates-search/search"
+
+    json = "{""corporate"":""" & corp & """,""prefecture"":""" & pref & """}"
+
+    Set http = CreateObject("MSXML2.XMLHTTP")
+
+    http.Open "POST", url, False
+
+    http.setRequestHeader "Content-Type", _
+        "application/json;charset=utf-8"
+
+    http.setRequestHeader "X-Requested-With", _
+        "XMLHttpRequest"
+
+    http.send json
+
+    '========================
+    ' HTTPエラー
+    '========================
+    If http.Status <> 200 Then
+
+        MsgBox "HTTPエラー：" & http.Status
+
+        Exit Sub
+
+    End If
+
+    data = http.responseText
+
+    '========================
+    ' 既存結果を削除
+    '========================
+    Range("A6:G10000").ClearContents
+
+    '========================
+    ' No.
+    '========================
+    Set re = CreateObject("VBScript.RegExp")
+
+    With re
+        .Global = True
+        .IgnoreCase = False
+        .pattern = """corporateNo"":""([^""]*)"""
+    End With
+
+    Set matches = re.Execute(data)
+
+    For i = 0 To matches.Count - 1
+
+        row = 6 + i
+
+        Cells(row, 1).Value = i + 1
+
+        '法人番号は文字列
+        With Cells(row, 2)
+            .NumberFormat = "@"
+            .Value = CStr(matches(i).SubMatches(0))
+        End With
+
+    Next i
+
+    '========================
+    ' 会社名
+    '========================
+    With re
+        .pattern = """corporateName"":""([^""]*)"""
+    End With
+
+    Set matches = re.Execute(data)
+
+    For i = 0 To matches.Count - 1
+
+        row = 6 + i
+
+        Cells(row, 3).Value = matches(i).SubMatches(0)
+
+    Next i
+
+    '========================
+    ' 郵便番号
+    '========================
+    With re
+        .pattern = """zipCode"":""([^""]*)"""
+    End With
+
+    Set matches = re.Execute(data)
+
+    For i = 0 To matches.Count - 1
+
+        row = 6 + i
+
+        '郵便番号も文字列
+        With Cells(row, 4)
+            .NumberFormat = "@"
+            .Value = CStr(matches(i).SubMatches(0))
+        End With
+
+    Next i
+
+    '========================
+    ' 都道府県
+    '========================
+    With re
+        .pattern = """prefecture"":""([^""]*)"""
+    End With
+
+    Set matches = re.Execute(data)
+
+    For i = 0 To matches.Count - 1
+
+        row = 6 + i
+
+        Cells(row, 5).Value = matches(i).SubMatches(0)
+
+    Next i
+
+    '========================
+    ' 市区町村
+    '========================
+    With re
+        .pattern = """city"":""([^""]*)"""
+    End With
+
+    Set matches = re.Execute(data)
+
+    For i = 0 To matches.Count - 1
+
+        row = 6 + i
+
+        Cells(row, 6).Value = matches(i).SubMatches(0)
+
+    Next i
+
+    '========================
+    ' 番地
+    '========================
+    With re
+        .pattern = """street"":""([^""]*)"""
+    End With
+
+    Set matches = re.Execute(data)
+
+    For i = 0 To matches.Count - 1
+
+        row = 6 + i
+
+        Cells(row, 7).Value = matches(i).SubMatches(0)
+
+    Next i
+
+    '========================
+    ' 完了
+    '========================
+    MsgBox matches.Count & "件取得しました。"
+
+End Sub
+
+Option Explicit
+
+Sub 法人検索_連続処理()
+
+    Dim http As Object
+    Dim re As Object
+    Dim matches As Object
+
+    Dim url As String
+    Dim json As String
+    Dim data As String
+
+    Dim pref As String
+    Dim corp As String
+
+    Dim i As Long
+    Dim lastRow As Long
+    Dim hitCount As Long
+
+    url = "https://toukibo.ai-con.lawyer/api/corporates-search/search"
+
+    '最終行
+    lastRow = Cells(Rows.Count, "B").End(xlUp).row
+
+    Set http = CreateObject("MSXML2.XMLHTTP")
+    Set re = CreateObject("VBScript.RegExp")
+
+    re.Global = True
+    re.IgnoreCase = False
+
+    For i = 6 To lastRow
+
+        pref = Trim(Cells(i, "B").Value)
+        corp = Trim(Cells(i, "C").Value)
+
+        '検索条件が空ならスキップ
+        If pref = "" Or corp = "" Then
+            GoTo ContinueLoop
+        End If
+
+        '前回結果をクリア
+        Range("D" & i & ":I" & i).ClearContents
+
+        'JSON作成
+        json = "{""corporate"":""" & corp & """,""prefecture"":""" & pref & """}"
+
+        'APIアクセス
+        http.Open "POST", url, False
+
+        http.setRequestHeader "Content-Type", _
+            "application/json;charset=utf-8"
+
+        http.setRequestHeader "X-Requested-With", _
+            "XMLHttpRequest"
+
+        http.send json
+
+        'HTTPエラー
+        If http.Status <> 200 Then
+
+            Cells(i, "D").Value = "HTTPエラー：" & http.Status
+
+            GoTo ContinueLoop
+
+        End If
+
+        data = http.responseText
+
+        '--------------------------------
+        ' 法人番号を取得して件数判定
+        '--------------------------------
+
+        re.pattern = """corporateNo"":""([^""]*)"""
+
+        Set matches = re.Execute(data)
+
+        hitCount = matches.Count
+
+        '--------------------------------
+        ' 0件
+        '--------------------------------
+
+        If hitCount = 0 Then
+
+            Cells(i, "D").Value = "該当なし"
+
+            GoTo ContinueLoop
+
+        End If
+
+        '--------------------------------
+        ' 2件以上
+        '--------------------------------
+
+        If hitCount >= 2 Then
+
+            Cells(i, "D").Value = _
+                "複数件該当有り　検索条件見直し"
+
+            GoTo ContinueLoop
+
+        End If
+
+        '--------------------------------
+        ' 1件だけ
+        '--------------------------------
+
+        '法人番号
+        With Cells(i, "D")
+            .NumberFormat = "@"
+            .Value = CStr(matches(0).SubMatches(0))
+        End With
+
+
+        '会社名
+        re.pattern = """corporateName"":""([^""]*)"""
+        Set matches = re.Execute(data)
+
+        If matches.Count >= 1 Then
+            Cells(i, "E").Value = matches(0).SubMatches(0)
+        End If
+
+
+        '郵便番号
+        re.pattern = """zipCode"":""([^""]*)"""
+        Set matches = re.Execute(data)
+
+        If matches.Count >= 1 Then
+            With Cells(i, "F")
+                .NumberFormat = "@"
+                .Value = CStr(matches(0).SubMatches(0))
+            End With
+        End If
+
+
+        '県
+        re.pattern = """prefecture"":""([^""]*)"""
+        Set matches = re.Execute(data)
+
+        If matches.Count >= 1 Then
+            Cells(i, "G").Value = matches(0).SubMatches(0)
+        End If
+
+
+        '市
+        re.pattern = """city"":""([^""]*)"""
+        Set matches = re.Execute(data)
+
+        If matches.Count >= 1 Then
+            Cells(i, "H").Value = matches(0).SubMatches(0)
+        End If
+
+
+        '番地
+        re.pattern = """street"":""([^""]*)"""
+        Set matches = re.Execute(data)
+
+        If matches.Count >= 1 Then
+            Cells(i, "I").Value = matches(0).SubMatches(0)
+        End If
+
+ContinueLoop:
+
+        DoEvents
+
+    Next i
+
+    MsgBox "連続検索が完了しました。"
+
+End Sub
+
+Option Explicit
+
+Sub 法人検索_50件連続処理()
+
+    Dim http As Object
+    Dim re As Object
+    Dim matches As Object
+
+    Dim url As String
+    Dim json As String
+    Dim data As String
+
+    Dim pref As String
+    Dim corp As String
+
+    Dim i As Long
+    Dim hitCount As Long
+
+    url = "https://toukibo.ai-con.lawyer/api/corporates-search/search"
+
+    Set http = CreateObject("MSXML2.XMLHTTP")
+    Set re = CreateObject("VBScript.RegExp")
+
+    re.Global = True
+    re.IgnoreCase = False
+
+    '6行目～55行目の50件　B6～B55
+    For i = 6 To 55
+
+        pref = Trim(Cells(i, "B").Value)
+        corp = Trim(Cells(i, "C").Value)
+
+        '都道府県または検索名が空ならスキップ
+        If pref = "" Or corp = "" Then
+            GoTo ContinueLoop
+        End If
+
+        '前回結果をクリア
+        Range("D" & i & ":I" & i).ClearContents
+
+        '検索中
+        Cells(i, "D").Value = "検索中..."
+
+        'JSON
+        json = "{""corporate"":""" & corp & """,""prefecture"":""" & pref & """}"
+
+        'API
+        http.Open "POST", url, False
+
+        http.setRequestHeader "Content-Type", _
+            "application/json;charset=utf-8"
+
+        http.setRequestHeader "X-Requested-With", _
+            "XMLHttpRequest"
+
+        http.send json
+
+        'HTTPエラー
+        If http.Status <> 200 Then
+
+            Cells(i, "D").Value = _
+                "HTTPエラー：" & http.Status
+
+            GoTo ContinueLoop
+
+        End If
+
+        data = http.responseText
+
+        '法人番号を取得
+        re.pattern = """corporateNo"":""([^""]*)"""
+        Set matches = re.Execute(data)
+
+        hitCount = matches.Count
+
+        '================================
+        ' 0件
+        '================================
+
+        If hitCount = 0 Then
+
+            Cells(i, "D").Value = "該当なし"
+
+            GoTo ContinueLoop
+
+        End If
+
+        '================================
+        ' 2件以上
+        '================================
+
+        If hitCount >= 2 Then
+
+            Cells(i, "D").Value = _
+                "複数件該当有り　検索条件見直し"
+
+            GoTo ContinueLoop
+
+        End If
+
+        '================================
+        ' 1件
+        '================================
+
+        '法人番号
+        With Cells(i, "D")
+
+            .NumberFormat = "@"
+            .Value = CStr(matches(0).SubMatches(0))
+
+        End With
+
+
+        '会社名
+        re.pattern = """corporateName"":""([^""]*)"""
+        Set matches = re.Execute(data)
+
+        If matches.Count >= 1 Then
+            Cells(i, "E").Value = _
+                matches(0).SubMatches(0)
+        End If
+
+
+        '郵便番号
+        re.pattern = """zipCode"":""([^""]*)"""
+        Set matches = re.Execute(data)
+
+        If matches.Count >= 1 Then
+
+            With Cells(i, "F")
+
+                .NumberFormat = "@"
+                .Value = CStr(matches(0).SubMatches(0))
+
+            End With
+
+        End If
+
+
+        '県
+        re.pattern = """prefecture"":""([^""]*)"""
+        Set matches = re.Execute(data)
+
+        If matches.Count >= 1 Then
+            Cells(i, "G").Value = _
+                matches(0).SubMatches(0)
+        End If
+
+
+        '市
+        re.pattern = """city"":""([^""]*)"""
+        Set matches = re.Execute(data)
+
+        If matches.Count >= 1 Then
+            Cells(i, "H").Value = _
+                matches(0).SubMatches(0)
+        End If
+
+
+        '番地
+        re.pattern = """street"":""([^""]*)"""
+        Set matches = re.Execute(data)
+
+        If matches.Count >= 1 Then
+            Cells(i, "I").Value = _
+                matches(0).SubMatches(0)
+        End If
+
+
+ContinueLoop:
+
+        DoEvents
+
+    Next i
+
+    MsgBox "検索が完了しました。"
+
+End Sub
+
