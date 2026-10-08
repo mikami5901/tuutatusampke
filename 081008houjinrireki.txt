@@ -32,7 +32,7 @@ Option Explicit
 '===========================================================
 
 Private Const APP_ID As String = _
-    "KjUA"
+    "KjU"
 
 Private Const API_URL As String = _
     "https://api.houjin-bangou.nta.go.jp/4/num"
