@@ -8,7 +8,7 @@ Option Explicit
 '====================================================
 
 '↓↓↓ ここに国税庁から発行されたアプリケーションIDを入れる
-Private Const APP_ID As String = "KjUA"
+Private Const APP_ID As String = "KjU"
 
 Private Const API_URL As String = _
     "https://api.houjin-bangou.nta.go.jp/4/name"
