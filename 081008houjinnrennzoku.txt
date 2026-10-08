@@ -40,7 +40,7 @@ Option Explicit
 '===========================================================
 
 ' 国税庁から取得したアプリケーションIDを入力
-Private Const APP_ID As String = "KjUAn"
+Private Const APP_ID As String = "KjU"
 
 ' 法人名検索API
 Private Const API_URL As String = _
