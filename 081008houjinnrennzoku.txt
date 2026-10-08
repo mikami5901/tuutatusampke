@@ -1,0 +1,669 @@
+Option Explicit
+
+'===========================================================
+' 国税庁 法人番号 Web-API
+' 法人名検索・連続取得
+'
+' 【Sheet3】
+'
+' B列：都道府県
+' C列：検索名
+' D列：法人番号
+' E列：会社名
+' F列：郵便番号
+' G列：県
+' H列：市
+' I列：番地
+'
+' 6行目から最終行まで上から順番に処理
+'
+' 【検索結果】
+'
+' 0件
+'   → D列「該当なし」
+'
+' 1件
+'   → D:I に法人情報
+'
+' 2件以上
+'   → D列「複数件あるため条件見直して」
+'
+' APIエラー
+'   → D列「APIエラー」
+'
+' ※ MsgBoxは使用しない
+'===========================================================
+
+
+'===========================================================
+' API設定
+'===========================================================
+
+' 国税庁から取得したアプリケーションIDを入力
+Private Const APP_ID As String = "KjUAn"
+
+' 法人名検索API
+Private Const API_URL As String = _
+    "https://api.houjin-bangou.nta.go.jp/4/name"
+
+
+'===========================================================
+' メイン処理
+'===========================================================
+
+Public Sub 法人番号連続取得()
+
+    Dim ws As Worksheet
+
+    Dim lastRow As Long
+    Dim r As Long
+
+    Dim prefecture As String
+    Dim companyName As String
+    Dim prefectureCode As String
+
+    '-------------------------------------------------------
+    ' 対象シート
+    '-------------------------------------------------------
+    Set ws = ThisWorkbook.Worksheets("Sheet3")
+
+
+    '-------------------------------------------------------
+    ' 最終行取得
+    '
+    ' B列・C列のどちらか長い方を採用
+    '-------------------------------------------------------
+    lastRow = Application.Max( _
+                ws.cells(ws.rows.count, "B").End(xlUp).row, _
+                ws.cells(ws.rows.count, "C").End(xlUp).row)
+
+
+    '-------------------------------------------------------
+    ' 検索対象なし
+    '-------------------------------------------------------
+    If lastRow < 6 Then Exit Sub
+
+
+    '-------------------------------------------------------
+    ' 高速化
+    '-------------------------------------------------------
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.StatusBar = False
+
+
+    On Error GoTo ErrorHandler
+
+
+    '=======================================================
+    ' 6行目から最終行まで連続処理
+    '=======================================================
+
+    For r = 6 To lastRow
+
+
+        '---------------------------------------------------
+        ' 入力値取得
+        '---------------------------------------------------
+        prefecture = Trim(CStr(ws.cells(r, "B").value))
+        companyName = Trim(CStr(ws.cells(r, "C").value))
+
+
+        '---------------------------------------------------
+        ' B列・C列が両方空欄ならスキップ
+        '---------------------------------------------------
+        If prefecture = "" And companyName = "" Then
+
+            GoTo ContinueLoop
+
+        End If
+
+
+        '---------------------------------------------------
+        ' 前回の検索結果をクリア
+        '---------------------------------------------------
+        ws.Range("D" & r & ":I" & r).ClearContents
+
+
+        '---------------------------------------------------
+        ' 都道府県コード取得
+        '---------------------------------------------------
+        prefectureCode = GetPrefectureCode(prefecture)
+
+
+        '---------------------------------------------------
+        ' 都道府県エラー
+        '---------------------------------------------------
+        If prefectureCode = "" Then
+
+            ws.cells(r, "D").value = "都道府県エラー"
+
+            GoTo ContinueLoop
+
+        End If
+
+
+        '---------------------------------------------------
+        ' 法人名が空欄
+        '---------------------------------------------------
+        If companyName = "" Then
+
+            ws.cells(r, "D").value = "法人名なし"
+
+            GoTo ContinueLoop
+
+        End If
+
+
+        '---------------------------------------------------
+        ' ステータスバー
+        '---------------------------------------------------
+        Application.StatusBar = _
+            "法人情報取得中　" & _
+            (r - 5) & "/" & (lastRow - 5) & _
+            "　" & _
+            prefecture & "　" & _
+            companyName
+
+
+        '---------------------------------------------------
+        ' 法人検索
+        '---------------------------------------------------
+        Call SearchOneCompany( _
+                ws, _
+                r, _
+                companyName, _
+                prefectureCode)
+
+
+ContinueLoop:
+
+        DoEvents
+
+    Next r
+
+
+'===========================================================
+' 正常終了
+'===========================================================
+
+ExitProcess:
+
+    Application.StatusBar = False
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+
+    Exit Sub
+
+
+'===========================================================
+' エラー処理
+'===========================================================
+
+ErrorHandler:
+
+    Application.StatusBar = False
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+
+
+    '-------------------------------------------------------
+    ' MsgBoxは使わず、現在行のD列に表示
+    '-------------------------------------------------------
+    If r >= 6 And r <= lastRow Then
+
+        ws.cells(r, "D").value = _
+            "エラー：" & Err.number
+
+    End If
+
+End Sub
+
+
+'===========================================================
+' 1件の法人を検索
+'
+' 戻り値
+'
+' 0  = 該当なし
+' 1  = 1件
+' 2  = 複数件
+' -1 = APIエラー
+'===========================================================
+
+Private Function SearchOneCompany( _
+    ByVal ws As Worksheet, _
+    ByVal targetRow As Long, _
+    ByVal companyName As String, _
+    ByVal prefectureCode As String) As Long
+
+
+    Dim http As Object
+    Dim xml As Object
+
+    Dim corporations As Object
+    Dim corp As Object
+
+    Dim url As String
+    Dim encodedName As String
+
+    Dim hitCount As Long
+
+
+    '=======================================================
+    ' 法人名をURLエンコード
+    '=======================================================
+
+    encodedName = WorksheetFunction.EncodeURL(companyName)
+
+
+    '=======================================================
+    ' API URL作成
+    '
+    ' name
+    '   法人名
+    '
+    ' mode=2
+    '   部分一致
+    '
+    ' target=1
+    '   あいまい検索
+    '
+    ' address
+    '   都道府県コード
+    '
+    ' change=0
+    '   変更履歴を含めない
+    '
+    ' close=1
+    '   閉鎖法人を含める
+    '
+    ' type=12
+    '   XML
+    '=======================================================
+
+    url = API_URL & _
+          "?id=" & APP_ID & _
+          "&name=" & encodedName & _
+          "&mode=2" & _
+          "&target=1" & _
+          "&address=" & prefectureCode & _
+          "&change=0" & _
+          "&close=1" & _
+          "&type=12"
+
+
+    '=======================================================
+    ' HTTP通信
+    '=======================================================
+
+    Set http = CreateObject("MSXML2.XMLHTTP")
+
+
+    On Error GoTo ApiError
+
+
+    http.Open _
+        "GET", _
+        url, _
+        False
+
+
+    http.send
+
+
+    '=======================================================
+    ' HTTPステータス確認
+    '=======================================================
+
+    If http.Status <> 200 Then
+
+        ws.cells(targetRow, "D").value = _
+            "APIエラー：" & http.Status
+
+        SearchOneCompany = -1
+
+        Exit Function
+
+    End If
+
+
+    '=======================================================
+    ' XML読み込み
+    '=======================================================
+
+    Set xml = _
+        CreateObject("MSXML2.DOMDocument.6.0")
+
+
+    xml.async = False
+    xml.validateOnParse = False
+
+
+    If Not xml.LoadXML(http.responseText) Then
+
+        ws.cells(targetRow, "D").value = _
+            "XML解析エラー"
+
+        SearchOneCompany = -1
+
+        Exit Function
+
+    End If
+
+
+    '=======================================================
+    ' 法人一覧取得
+    '=======================================================
+
+    Set corporations = _
+        xml.SelectNodes("/corporations/corporation")
+
+
+    hitCount = corporations.Length
+
+
+    '=======================================================
+    ' 0件
+    '=======================================================
+
+    If hitCount = 0 Then
+
+        ws.cells(targetRow, "D").value = _
+            "該当なし"
+
+        SearchOneCompany = 0
+
+        Exit Function
+
+    End If
+
+
+    '=======================================================
+    ' 2件以上
+    '=======================================================
+
+    If hitCount >= 2 Then
+
+        ws.cells(targetRow, "D").value = _
+            "複数件あるため条件見直して"
+
+        SearchOneCompany = 2
+
+        Exit Function
+
+    End If
+
+
+    '=======================================================
+    ' 1件だけ
+    '=======================================================
+
+    Set corp = corporations.item(0)
+
+
+    '=======================================================
+    ' D列：法人番号
+    '=======================================================
+
+    ws.cells(targetRow, "D").NumberFormat = "@"
+
+    ws.cells(targetRow, "D").value = _
+        GetNodeValue(corp, "corporateNumber")
+
+
+    '=======================================================
+    ' E列：会社名
+    '=======================================================
+
+    ws.cells(targetRow, "E").value = _
+        GetNodeValue(corp, "name")
+
+
+    '=======================================================
+    ' F列：郵便番号
+    '=======================================================
+
+    ws.cells(targetRow, "F").NumberFormat = "@"
+
+    ws.cells(targetRow, "F").value = _
+        GetNodeValue(corp, "postCode")
+
+
+    '=======================================================
+    ' G列：県
+    '=======================================================
+
+    ws.cells(targetRow, "G").value = _
+        GetNodeValue(corp, "prefectureName")
+
+
+    '=======================================================
+    ' H列：市
+    '=======================================================
+
+    ws.cells(targetRow, "H").value = _
+        GetNodeValue(corp, "cityName")
+
+
+    '=======================================================
+    ' I列：番地
+    '=======================================================
+
+    ws.cells(targetRow, "I").value = _
+        GetNodeValue(corp, "streetNumber")
+
+
+    '=======================================================
+    ' 1件取得成功
+    '=======================================================
+
+    SearchOneCompany = 1
+
+    Exit Function
+
+
+'===========================================================
+' API通信エラー
+'===========================================================
+
+ApiError:
+
+    ws.cells(targetRow, "D").value = _
+        "APIエラー"
+
+    SearchOneCompany = -1
+
+End Function
+
+
+'===========================================================
+' XMLノードの値を取得
+'===========================================================
+
+Private Function GetNodeValue( _
+    ByVal parentNode As Object, _
+    ByVal nodeName As String) As String
+
+
+    Dim node As Object
+
+
+    Set node = _
+        parentNode.SelectSingleNode(nodeName)
+
+
+    If node Is Nothing Then
+
+        GetNodeValue = ""
+
+    Else
+
+        GetNodeValue = node.text
+
+    End If
+
+End Function
+
+
+'===========================================================
+' 都道府県コード取得
+'
+' JIS X 0401
+'===========================================================
+
+Private Function GetPrefectureCode( _
+    ByVal prefecture As String) As String
+
+
+    Select Case prefecture
+
+
+        Case "北海道"
+            GetPrefectureCode = "01"
+
+        Case "青森県"
+            GetPrefectureCode = "02"
+
+        Case "岩手県"
+            GetPrefectureCode = "03"
+
+        Case "宮城県"
+            GetPrefectureCode = "04"
+
+        Case "秋田県"
+            GetPrefectureCode = "05"
+
+        Case "山形県"
+            GetPrefectureCode = "06"
+
+        Case "福島県"
+            GetPrefectureCode = "07"
+
+        Case "茨城県"
+            GetPrefectureCode = "08"
+
+        Case "栃木県"
+            GetPrefectureCode = "09"
+
+        Case "群馬県"
+            GetPrefectureCode = "10"
+
+        Case "埼玉県"
+            GetPrefectureCode = "11"
+
+        Case "千葉県"
+            GetPrefectureCode = "12"
+
+        Case "東京都"
+            GetPrefectureCode = "13"
+
+        Case "神奈川県"
+            GetPrefectureCode = "14"
+
+        Case "新潟県"
+            GetPrefectureCode = "15"
+
+        Case "富山県"
+            GetPrefectureCode = "16"
+
+        Case "石川県"
+            GetPrefectureCode = "17"
+
+        Case "福井県"
+            GetPrefectureCode = "18"
+
+        Case "山梨県"
+            GetPrefectureCode = "19"
+
+        Case "長野県"
+            GetPrefectureCode = "20"
+
+        Case "岐阜県"
+            GetPrefectureCode = "21"
+
+        Case "静岡県"
+            GetPrefectureCode = "22"
+
+        Case "愛知県"
+            GetPrefectureCode = "23"
+
+        Case "三重県"
+            GetPrefectureCode = "24"
+
+        Case "滋賀県"
+            GetPrefectureCode = "25"
+
+        Case "京都府"
+            GetPrefectureCode = "26"
+
+        Case "大阪府"
+            GetPrefectureCode = "27"
+
+        Case "兵庫県"
+            GetPrefectureCode = "28"
+
+        Case "奈良県"
+            GetPrefectureCode = "29"
+
+        Case "和歌山県"
+            GetPrefectureCode = "30"
+
+        Case "鳥取県"
+            GetPrefectureCode = "31"
+
+        Case "島根県"
+            GetPrefectureCode = "32"
+
+        Case "岡山県"
+            GetPrefectureCode = "33"
+
+        Case "広島県"
+            GetPrefectureCode = "34"
+
+        Case "山口県"
+            GetPrefectureCode = "35"
+
+        Case "徳島県"
+            GetPrefectureCode = "36"
+
+        Case "香川県"
+            GetPrefectureCode = "37"
+
+        Case "愛媛県"
+            GetPrefectureCode = "38"
+
+        Case "高知県"
+            GetPrefectureCode = "39"
+
+        Case "福岡県"
+            GetPrefectureCode = "40"
+
+        Case "佐賀県"
+            GetPrefectureCode = "41"
+
+        Case "長崎県"
+            GetPrefectureCode = "42"
+
+        Case "熊本県"
+            GetPrefectureCode = "43"
+
+        Case "大分県"
+            GetPrefectureCode = "44"
+
+        Case "宮崎県"
+            GetPrefectureCode = "45"
+
+        Case "鹿児島県"
+            GetPrefectureCode = "46"
+
+        Case "沖縄県"
+            GetPrefectureCode = "47"
+
+        Case Else
+            GetPrefectureCode = ""
+
+    End Select
+
+End Function
+

@@ -1,0 +1,448 @@
+
+
+Option Explicit
+
+'====================================================
+' 国税庁 法人番号Web-API
+' 法人名＋都道府県で検索 一覧取得
+'====================================================
+
+'↓↓↓ ここに国税庁から発行されたアプリケーションIDを入れる
+Private Const APP_ID As String = "KjUA"
+
+Private Const API_URL As String = _
+    "https://api.houjin-bangou.nta.go.jp/4/name"
+
+
+'====================================================
+' メイン処理
+' ボタン1から呼び出す
+'====================================================
+Public Sub 法人番号一覧検索()
+
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Worksheets("Sheet2")
+
+    Dim prefecture As String
+    Dim companyName As String
+    Dim prefectureCode As String
+
+    prefecture = Trim(ws.Range("B1").value)
+    companyName = Trim(ws.Range("B2").value)
+
+    '----------------------------------------
+    ' 入力チェック
+    '----------------------------------------
+    If prefecture = "" Then
+        MsgBox "都道府県を入力してください。", vbExclamation
+        ws.Range("B1").Select
+        Exit Sub
+    End If
+
+    If companyName = "" Then
+        MsgBox "会社名を入力してください。", vbExclamation
+        ws.Range("B2").Select
+        Exit Sub
+    End If
+
+    If APP_ID = "ここに13桁のアプリケーションID" Then
+        MsgBox "APIのアプリケーションIDを設定してください。", vbCritical
+        Exit Sub
+    End If
+
+    '----------------------------------------
+    ' 都道府県コード取得
+    '----------------------------------------
+    prefectureCode = GetPrefectureCode(prefecture)
+
+    If prefectureCode = "" Then
+        MsgBox "都道府県名が正しくありません。" & vbCrLf & _
+               "例：大阪府、和歌山県、東京都", _
+               vbExclamation
+        ws.Range("B1").Select
+        Exit Sub
+    End If
+
+    '----------------------------------------
+    ' 既存結果を削除
+    '----------------------------------------
+    ClearResult ws
+
+    Application.ScreenUpdating = False
+
+    '----------------------------------------
+    ' API検索
+    '----------------------------------------
+    SearchHoujin ws, companyName, prefectureCode
+
+    Application.ScreenUpdating = True
+
+End Sub
+
+
+'====================================================
+' 法人名検索
+'====================================================
+Private Sub SearchHoujin( _
+    ByVal ws As Worksheet, _
+    ByVal companyName As String, _
+    ByVal prefectureCode As String)
+
+    Dim http As Object
+    Dim xml As Object
+    Dim corporations As Object
+    Dim corp As Object
+
+    Dim url As String
+    Dim encodedName As String
+
+    Dim row As Long
+    Dim count As Long
+
+    '----------------------------------------
+    ' URLエンコード
+    ' UTF-8でエンコードされる
+    '----------------------------------------
+    encodedName = WorksheetFunction.EncodeURL(companyName)
+
+    '----------------------------------------
+    ' API URL
+    '
+    ' mode=2    部分一致
+    ' target=1  あいまい検索
+    ' address   都道府県コード
+    ' change=0  変更履歴なし
+    ' close=1   閉鎖法人あり
+    ' type=12   XML
+    '----------------------------------------
+    url = API_URL & _
+          "?id=" & APP_ID & _
+          "&name=" & encodedName & _
+          "&mode=2" & _
+          "&target=1" & _
+          "&address=" & prefectureCode & _
+          "&change=0" & _
+          "&close=1" & _
+          "&type=12"
+
+    '----------------------------------------
+    ' HTTP GET
+    '----------------------------------------
+    Set http = CreateObject("MSXML2.XMLHTTP")
+
+    On Error GoTo CommunicationError
+
+    http.Open "GET", url, False
+    http.send
+
+    '----------------------------------------
+    ' HTTPステータス確認
+    '----------------------------------------
+    If http.Status <> 200 Then
+
+        Application.ScreenUpdating = True
+
+        MsgBox "APIエラーが発生しました。" & vbCrLf & vbCrLf & _
+               "HTTP Status : " & http.Status & vbCrLf & _
+               "会社名 : " & companyName & vbCrLf & _
+               "都道府県 : " & ws.Range("B1").value & vbCrLf & vbCrLf & _
+               Left(http.responseText, 500), _
+               vbCritical
+
+        Exit Sub
+    End If
+
+    '----------------------------------------
+    ' XML解析
+    '----------------------------------------
+    Set xml = CreateObject("MSXML2.DOMDocument.6.0")
+
+    xml.async = False
+    xml.validateOnParse = False
+
+    If Not xml.LoadXML(http.responseText) Then
+
+        MsgBox "XMLの解析に失敗しました。", vbCritical
+        Exit Sub
+
+    End If
+
+    '----------------------------------------
+    ' 件数
+    '----------------------------------------
+    count = CLng(GetNodeValue(xml, "/corporations/count"))
+
+    If count = 0 Then
+
+        Application.ScreenUpdating = True
+
+        MsgBox "該当する法人がありませんでした。" & vbCrLf & vbCrLf & _
+               "都道府県：" & ws.Range("B1").value & vbCrLf & _
+               "会社名：" & companyName, _
+               vbInformation
+
+        Exit Sub
+
+    End If
+
+    '----------------------------------------
+    ' 法人データ取得
+    '----------------------------------------
+    Set corporations = xml.SelectNodes("/corporations/corporation")
+
+    row = 6
+
+    For Each corp In corporations
+
+        'A列：No
+        ws.cells(row, "A").value = row - 5
+
+        'B列：法人番号
+        ws.cells(row, "B").NumberFormat = "@"
+        ws.cells(row, "B").value = _
+            GetNodeValue(corp, "corporateNumber")
+
+        'C列：会社名
+        ws.cells(row, "C").value = _
+            GetNodeValue(corp, "name")
+
+        'D列：郵便番号
+        ws.cells(row, "D").NumberFormat = "@"
+        ws.cells(row, "D").value = _
+            GetNodeValue(corp, "postCode")
+
+        'E列：県
+        ws.cells(row, "E").value = _
+            GetNodeValue(corp, "prefectureName")
+
+        'F列：市
+        ws.cells(row, "F").value = _
+            GetNodeValue(corp, "cityName")
+
+        'G列：番地
+        ws.cells(row, "G").value = _
+            GetNodeValue(corp, "streetNumber")
+
+        row = row + 1
+
+    Next corp
+
+    '----------------------------------------
+    ' 表示調整
+    '----------------------------------------
+    'ws.Range("A5:G" & row - 1).Borders.LineStyle = xlContinuous
+
+    ws.Columns("A:G").AutoFit
+
+    Application.ScreenUpdating = True
+
+    MsgBox count & "件の法人が見つかりました。", vbInformation
+
+    Exit Sub
+
+
+CommunicationError:
+
+    Application.ScreenUpdating = True
+
+    MsgBox "APIへの接続に失敗しました。" & vbCrLf & vbCrLf & _
+           Err.Description, vbCritical
+
+End Sub
+
+
+'====================================================
+' XMLノードの値を取得
+'====================================================
+Private Function GetNodeValue( _
+    ByVal parentNode As Object, _
+    ByVal nodeName As String) As String
+
+    Dim node As Object
+
+    Set node = parentNode.SelectSingleNode(nodeName)
+
+    If node Is Nothing Then
+        GetNodeValue = ""
+    Else
+        GetNodeValue = node.text
+    End If
+
+End Function
+
+
+'====================================================
+' 検索結果を削除
+'====================================================
+Private Sub ClearResult(ByVal ws As Worksheet)
+
+    Dim lastRow As Long
+
+    lastRow = ws.cells(ws.rows.count, "B").End(xlUp).row
+
+    If lastRow >= 6 Then
+
+        ws.Range("A6:G" & lastRow).ClearContents
+        ws.Range("A6:G" & lastRow).Borders.LineStyle = xlNone
+
+    End If
+
+End Sub
+
+
+'====================================================
+' 都道府県コード
+' JIS X 0401
+'====================================================
+Private Function GetPrefectureCode(ByVal prefecture As String) As String
+
+    Select Case prefecture
+
+        Case "北海道"
+            GetPrefectureCode = "01"
+
+        Case "青森県"
+            GetPrefectureCode = "02"
+
+        Case "岩手県"
+            GetPrefectureCode = "03"
+
+        Case "宮城県"
+            GetPrefectureCode = "04"
+
+        Case "秋田県"
+            GetPrefectureCode = "05"
+
+        Case "山形県"
+            GetPrefectureCode = "06"
+
+        Case "福島県"
+            GetPrefectureCode = "07"
+
+        Case "茨城県"
+            GetPrefectureCode = "08"
+
+        Case "栃木県"
+            GetPrefectureCode = "09"
+
+        Case "群馬県"
+            GetPrefectureCode = "10"
+
+        Case "埼玉県"
+            GetPrefectureCode = "11"
+
+        Case "千葉県"
+            GetPrefectureCode = "12"
+
+        Case "東京都"
+            GetPrefectureCode = "13"
+
+        Case "神奈川県"
+            GetPrefectureCode = "14"
+
+        Case "新潟県"
+            GetPrefectureCode = "15"
+
+        Case "富山県"
+            GetPrefectureCode = "16"
+
+        Case "石川県"
+            GetPrefectureCode = "17"
+
+        Case "福井県"
+            GetPrefectureCode = "18"
+
+        Case "山梨県"
+            GetPrefectureCode = "19"
+
+        Case "長野県"
+            GetPrefectureCode = "20"
+
+        Case "岐阜県"
+            GetPrefectureCode = "21"
+
+        Case "静岡県"
+            GetPrefectureCode = "22"
+
+        Case "愛知県"
+            GetPrefectureCode = "23"
+
+        Case "三重県"
+            GetPrefectureCode = "24"
+
+        Case "滋賀県"
+            GetPrefectureCode = "25"
+
+        Case "京都府"
+            GetPrefectureCode = "26"
+
+        Case "大阪府"
+            GetPrefectureCode = "27"
+
+        Case "兵庫県"
+            GetPrefectureCode = "28"
+
+        Case "奈良県"
+            GetPrefectureCode = "29"
+
+        Case "和歌山県"
+            GetPrefectureCode = "30"
+
+        Case "鳥取県"
+            GetPrefectureCode = "31"
+
+        Case "島根県"
+            GetPrefectureCode = "32"
+
+        Case "岡山県"
+            GetPrefectureCode = "33"
+
+        Case "広島県"
+            GetPrefectureCode = "34"
+
+        Case "山口県"
+            GetPrefectureCode = "35"
+
+        Case "徳島県"
+            GetPrefectureCode = "36"
+
+        Case "香川県"
+            GetPrefectureCode = "37"
+
+        Case "愛媛県"
+            GetPrefectureCode = "38"
+
+        Case "高知県"
+            GetPrefectureCode = "39"
+
+        Case "福岡県"
+            GetPrefectureCode = "40"
+
+        Case "佐賀県"
+            GetPrefectureCode = "41"
+
+        Case "長崎県"
+            GetPrefectureCode = "42"
+
+        Case "熊本県"
+            GetPrefectureCode = "43"
+
+        Case "大分県"
+            GetPrefectureCode = "44"
+
+        Case "宮崎県"
+            GetPrefectureCode = "45"
+
+        Case "鹿児島県"
+            GetPrefectureCode = "46"
+
+        Case "沖縄県"
+            GetPrefectureCode = "47"
+
+        Case Else
+            GetPrefectureCode = ""
+
+    End Select
+
+End Function
+
