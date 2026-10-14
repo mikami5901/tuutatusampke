@@ -1,0 +1,85 @@
+Option Explicit
+
+Sub 郵便番号から住所取得()
+
+    Dim ws As Worksheet
+    Dim http As Object
+    Dim zipcode As String
+    Dim url As String
+    Dim response As String
+    Dim address As String
+
+    Set ws = ThisWorkbook.Worksheets("法人情報")
+
+    ' C12：郵便番号
+    zipcode = Trim$(CStr(ws.Range("C12").Value2))
+    zipcode = Replace(zipcode, "-", "")
+    zipcode = Replace(zipcode, "－", "")
+
+    If Len(zipcode) <> 7 Or Not IsNumeric(zipcode) Then
+        MsgBox "C12に7桁の郵便番号を入力してください。", vbExclamation
+        Exit Sub
+    End If
+
+    url = "https://zipcloud.ibsnet.co.jp/api/search?zipcode=" & zipcode
+
+    Set http = CreateObject("WinHttp.WinHttpRequest.5.1")
+
+    On Error GoTo ErrorHandler
+
+    http.Open "GET", url, False
+    http.SetTimeouts 10000, 10000, 15000, 15000
+    http.Send
+
+    If http.Status <> 200 Then
+        MsgBox "HTTPエラー：" & http.Status, vbExclamation
+        Exit Sub
+    End If
+
+    response = http.ResponseText
+
+    ' 結果がない場合
+    If InStr(response, """results"": null") > 0 Then
+        ws.Range("C13").ClearContents
+        MsgBox "該当する住所が見つかりません。", vbInformation
+        Exit Sub
+    End If
+
+    ' JSONから住所を抽出
+    address = JsonValue(response, "address1") & _
+              JsonValue(response, "address2") & _
+              JsonValue(response, "address3")
+
+    If address = "" Then
+        MsgBox "住所を取得できませんでした。" & vbCrLf & response, vbExclamation
+        Exit Sub
+    End If
+
+    ' C13：住所
+    ws.Range("C13").value = address
+
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "エラー：" & Err.Description, vbExclamation
+
+End Sub
+
+Private Function JsonValue(ByVal json As String, _
+                           ByVal key As String) As String
+
+    Dim re As Object
+    Dim matches As Object
+
+    Set re = CreateObject("VBScript.RegExp")
+
+    re.pattern = """" & key & """\s*:\s*""([^""]*)"""
+    re.Global = False
+
+    If re.Test(json) Then
+        Set matches = re.Execute(json)
+        JsonValue = matches(0).SubMatches(0)
+    End If
+
+End Function
+

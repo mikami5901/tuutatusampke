@@ -1,0 +1,96 @@
+Option Explicit
+
+Sub 法人情報http取得()
+
+    Dim ws As Worksheet
+    Dim http As Object
+    Dim html As Object
+    Dim dts As Object
+    Dim dt As Object
+    Dim dd As Object
+    Dim i As Long
+    Dim corpNo As String
+    Dim url As String
+    Dim label As String
+
+    Set ws = ThisWorkbook.Worksheets("法人情報")
+
+    'MsgBox "マクロ開始"
+
+    corpNo = Trim$(CStr(ws.Range("C4").Value2))
+
+    If corpNo = "" Then
+        MsgBox "C4が空です"
+        Exit Sub
+    End If
+
+    url = "https://www.houjin-bangou.nta.go.jp/henkorireki-johoto.html?selHouzinNo=" & corpNo
+
+    Set http = CreateObject("WinHttp.WinHttpRequest.5.1")
+
+    On Error GoTo ErrHandler
+
+    http.Open "GET", url, False
+    http.SetTimeouts 10000, 10000, 15000, 15000
+    http.Send
+
+    'MsgBox "HTTP Status: " & http.Status & vbCrLf & _
+           "HTML文字数: " & Len(http.ResponseText)
+    Application.Wait Now + TimeValue("00:00:01")
+
+    If http.Status <> 200 Then Exit Sub
+
+    Set html = CreateObject("htmlfile")
+    html.Open
+    html.Write http.ResponseText
+    html.Close
+
+    Set dts = html.getElementsByTagName("dt")
+
+    'MsgBox "dt要素数: " & dts.Length
+    Application.Wait Now + TimeValue("00:00:01")
+
+    For i = 0 To dts.Length - 1
+
+        Set dt = dts.item(i)
+        label = Trim$(CStr(dt.innerText))
+
+        Set dd = dt.NextSibling
+
+        Do While Not dd Is Nothing
+            If dd.NodeType = 1 Then Exit Do
+            Set dd = dd.NextSibling
+        Loop
+
+        If Not dd Is Nothing Then
+            If LCase$(CStr(dd.nodeName)) = "dd" Then
+
+                Select Case label
+                    Case "商号又は名称（フリガナ）"
+                        ws.Range("C5").value = Trim$(CStr(dd.innerText))
+
+                    Case "商号又は名称"
+                        ws.Range("C6").value = Trim$(CStr(dd.innerText))
+
+                    Case "本店又は主たる事務所の所在地"
+                        ws.Range("C7").value = Trim$(CStr(dd.innerText))
+                End Select
+
+            End If
+        End If
+
+    Next i
+
+    'MsgBox "処理終了" & vbCrLf & _
+           "法人名カナ: " & ws.Range("C5").value & vbCrLf & _
+           "法人名: " & ws.Range("C6").value & vbCrLf & _
+           "住所: " & ws.Range("C7").value
+
+    Exit Sub
+
+ErrHandler:
+    MsgBox "エラー番号: " & Err.number & vbCrLf & _
+           Err.Description, vbCritical
+
+End Sub
+
