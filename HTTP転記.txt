@@ -1,0 +1,49 @@
+Option Explicit
+
+Sub 請求書へ転記()
+
+    Dim wsSrc As Worksheet
+    Dim wsDst As Worksheet
+
+    Set wsSrc = ThisWorkbook.Worksheets("法人情報")
+    Set wsDst = ThisWorkbook.Worksheets("印紙税納付計器使用請求書")
+
+    ' 請求者の情報
+    転記先設定 wsDst, "F02", wsSrc.Range("C4").Value
+    転記先設定 wsDst, "F03", wsSrc.Range("C5").Value
+    転記先設定 wsDst, "F04", wsSrc.Range("C6").Value
+    転記先設定 wsDst, "F06", wsSrc.Range("C7").Value
+
+    ' 設置場所の情報
+    転記先設定 wsDst, "F08", wsSrc.Range("C12").Value
+    転記先設定 wsDst, "F09", wsSrc.Range("C13").Value
+    転記先設定 wsDst, "E03", wsSrc.Range("C14").Value
+
+    MsgBox "請求書への転記が完了しました。", vbInformation
+
+End Sub
+
+Private Sub 転記先設定( _
+    ByVal ws As Worksheet, _
+    ByVal 項目コード As String, _
+    ByVal 転記値 As Variant)
+
+    Dim foundCell As Range
+
+    Set foundCell = ws.Cells.Find( _
+        What:=項目コード, _
+        LookIn:=xlValues, _
+        LookAt:=xlWhole, _
+        SearchOrder:=xlByRows, _
+        SearchDirection:=xlNext, _
+        MatchCase:=False)
+
+    If foundCell Is Nothing Then
+        Err.Raise vbObjectError + 1000, , _
+            "転記先の項目コードが見つかりません：" & 項目コード
+    End If
+
+    ' 項目コードの右隣にある入力欄へ転記
+    foundCell.Offset(0, 1).Value = 転記値
+
+End Sub
